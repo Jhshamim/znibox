@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Maximize, Minimize, AlertCircle, SkipForward, Play, Pause, Volume2, VolumeX, Settings, Server, Captions, CaptionsOff, RotateCcw, RotateCw, Gauge, Languages } from 'lucide-react';
 import { useAnimeDetails, useAnimeEpisodes } from '@/hooks/useAnime';
+import { Episode } from '@/lib/api';
 import { useWatchHistory } from '@/hooks/useWatchHistory';
 import { WatchHistoryEntry } from '@/lib/db';
 import { Slider } from '@/components/ui/slider';
@@ -108,8 +109,36 @@ const VideoPlayer = () => {
   const se = parseInt(searchParams.get('se') || '0', 10);
   const subjectId = searchParams.get('subjectId');
 
-  const totalEpisodes = episodesData?.totalEpisodes || anime?.episodes || 12;
-  const hasNextEpisode = episode < totalEpisodes;
+  const getCurrentEpisodeIndex = useCallback(() => {
+    if (!episodesData || !episodesData.seasons) return null;
+    const totalEps = 0;
+    
+    // Check if Movie
+    if (episodesData.total_seasons === 1 && episodesData.seasons[0] && episodesData.seasons[0].episode_count === 0) {
+      return { isMovie: true, totalEps: 1, currentEps: 0 };
+    }
+
+    const flatEpisodes: Episode[] = [];
+    episodesData.seasons.forEach((season) => {
+      season.episodes.forEach((ep) => {
+        flatEpisodes.push(ep);
+      });
+    });
+
+    const currentIndex = flatEpisodes.findIndex(e => e.ep === episode && e.se === se);
+
+    return { 
+      isMovie: false, 
+      flatEpisodes, 
+      currentIndex,
+      totalEps: flatEpisodes.length
+    };
+  }, [episodesData, episode, se]);
+
+  const navInfo = getCurrentEpisodeIndex();
+  const totalEpisodes = navInfo?.totalEps || anime?.episodes || 12;
+  const hasNextEpisode = navInfo ? (!navInfo.isMovie && navInfo.currentIndex !== -1 && navInfo.currentIndex < (navInfo.flatEpisodes?.length || 0) - 1) : false;
+  const hasPrevEpisode = navInfo ? (!navInfo.isMovie && navInfo.currentIndex > 0) : false;
 
   const resetControlsTimeout = useCallback(() => {
     if (controlsTimeoutRef.current) {
@@ -371,7 +400,10 @@ const VideoPlayer = () => {
     setError(null);
 
     try {
-      const streamUrl = `https://movie-box-api-v1.jhshamim81.workers.dev/api/stream/${subjectId}?detail_path=${id}&se=${se}&ep=${episode}`;
+      let streamUrl = `https://movie-box-api-v1.jhshamim81.workers.dev/api/stream/${subjectId}?detail_path=${id}`;
+      if (se > 0 || episode > 0) {
+        streamUrl += `&se=${se}&ep=${episode}`;
+      }
       const res = await fetch(streamUrl);
       const json = await res.json();
 
@@ -416,15 +448,15 @@ const VideoPlayer = () => {
       if (!result || !mounted) return;
       
       let selectedUrl = result.servers[0].url;
-      let type = result.servers[0].type.toLowerCase() === 'm3u8' ? 'm3u8' : 'auto';
+      let type = result.servers[0].type.toLowerCase() === 'm3u8' ? 'm3u8' : 'mp4';
       
       const selectedServer = result.servers.find(s => s.server_id.toLowerCase() === currentServer.toLowerCase() || s.serverName.toLowerCase() === currentServer.toLowerCase());
       if (selectedServer) {
         selectedUrl = selectedServer.url;
-        type = selectedServer.type.toLowerCase() === 'm3u8' ? 'm3u8' : 'auto';
+        type = selectedServer.type.toLowerCase() === 'm3u8' ? 'm3u8' : 'mp4';
       }
       
-      const streamUrl = type === 'auto' ? CORS_PROXY + encodeURIComponent(selectedUrl) : selectedUrl;
+      const streamUrl = type === 'mp4' ? CORS_PROXY + encodeURIComponent(selectedUrl) : selectedUrl;
       
       const tracks: StreamTrack[] = result.subtitles || [];
       const defaultSub = tracks.find(t => t.kind === 'captions' && t.default) || tracks.find(t => t.kind === 'captions');
@@ -822,22 +854,20 @@ const VideoPlayer = () => {
   };
 
   const handleNextEpisode = useCallback(() => {
-    if (!hasNextEpisode || !episodesData) return;
-    const nextEpNum = episode + 1;
-    const nextEp = episodesData.episodes.find(e => e.episode_no === nextEpNum);
+    if (!hasNextEpisode || !navInfo || !navInfo.flatEpisodes) return;
+    const nextEp = navInfo.flatEpisodes[navInfo.currentIndex + 1];
     if (nextEp) {
-      navigate(`/watch/${id}?epId=${encodeURIComponent(nextEp.id)}&ep=${nextEpNum}&audio=${audioType}`, { replace: true });
+      navigate(`/watch/${id}?subjectId=${subjectId}&se=${nextEp.se}&ep=${nextEp.ep}`, { replace: true });
     }
-  }, [episode, hasNextEpisode, id, audioType, navigate, episodesData]);
+  }, [hasNextEpisode, id, subjectId, navigate, navInfo]);
 
   const handlePreviousEpisode = useCallback(() => {
-    if (episode <= 1 || !episodesData) return;
-    const prevEpNum = episode - 1;
-    const prevEp = episodesData.episodes.find(e => e.episode_no === prevEpNum);
+    if (!hasPrevEpisode || !navInfo || !navInfo.flatEpisodes) return;
+    const prevEp = navInfo.flatEpisodes[navInfo.currentIndex - 1];
     if (prevEp) {
-      navigate(`/watch/${id}?epId=${encodeURIComponent(prevEp.id)}&ep=${prevEpNum}&audio=${audioType}`, { replace: true });
+      navigate(`/watch/${id}?subjectId=${subjectId}&se=${prevEp.se}&ep=${prevEp.ep}`, { replace: true });
     }
-  }, [episode, id, audioType, navigate, episodesData]);
+  }, [hasPrevEpisode, id, subjectId, navigate, navInfo]);
 
   const setQuality = (levelIndex: number) => {
     if (hlsInstanceRef.current) {
@@ -1165,7 +1195,7 @@ const VideoPlayer = () => {
           <div className="flex-1 flex items-center justify-center gap-12 pointer-events-none">
           <button
             onClick={(e) => { e.stopPropagation(); handlePreviousEpisode(); }}
-            disabled={episode <= 1}
+            disabled={!hasPrevEpisode}
               className={`w-14 h-14 rounded-full flex items-center justify-center disabled:opacity-30 hover:bg-white/10 transition-all hover:scale-110 active:scale-95 ${showControls ? 'pointer-events-auto' : ''}`}
             >
               <SkipForward className="w-8 h-8 rotate-180 fill-white" />

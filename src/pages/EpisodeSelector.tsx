@@ -130,6 +130,25 @@ const EpisodeSelector = () => {
 
   const displayedEpisodes = useMemo(() => {
     if (!currentSeasonData) return [];
+
+    if (episodesData?.total_seasons === 1 && currentSeasonData.episode_count === 0 && currentSeasonData.episodes.length === 0) {
+      const epProgress = episodeProgressMap.get(0);
+      const watchedPercent = epProgress ? formatProgress(epProgress.timestamp, epProgress.duration) : 0;
+      return [{
+        number: 0,
+        season: 0,
+        id: "0",
+        title: "Full Movie",
+        isWatched: watchedPercent >= 90,
+        isInProgress: watchedPercent > 0 && watchedPercent < 90,
+        watchedPercent,
+        savedProgress: epProgress,
+        hasDub: dubCount > 0,
+        isFiller: false,
+        rawEp: { ep: 0, se: 0, name: "Full Movie" }
+      }];
+    }
+
     return currentSeasonData.episodes.map((ep) => {
       const epProgress = episodeProgressMap.get(ep.ep);
       const watchedPercent = epProgress ? formatProgress(epProgress.timestamp, epProgress.duration) : 0;
@@ -147,18 +166,7 @@ const EpisodeSelector = () => {
         rawEp: ep
       };
     });
-  }, [currentSeasonData, episodeProgressMap, dubCount, formatProgress]);
-
-  // Handle Movie Auto play
-  useEffect(() => {
-    if (episodesData && episodesData.total_seasons === 1) {
-      if (episodesData.seasons[0] && episodesData.seasons[0].episode_count === 0) {
-        // It's a Movie
-        enterFullscreenLandscape();
-        navigate(`/watch/${id}?subjectId=${episodesData.subject_id}&se=0&ep=0`);
-      }
-    }
-  }, [episodesData, navigate, id]);
+  }, [currentSeasonData, episodeProgressMap, dubCount, formatProgress, episodesData?.total_seasons]);
 
   if (detailsLoading || episodesLoading || languagesLoading || !anime || !episodesData) {
     return (
